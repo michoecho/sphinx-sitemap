@@ -13,7 +13,7 @@
 
 import os
 import xml.etree.ElementTree as ET
-
+import multiprocessing
 
 def setup(app):
     """Setup connects events to the sitemap builder"""
@@ -51,12 +51,12 @@ def setup(app):
     app.connect('builder-inited', record_builder_type)
     app.connect('html-page-context', add_html_link)
     app.connect('build-finished', create_sitemap)
-    app.sitemap_links = []
+    app.results = multiprocessing.Manager().dict()
     app.locales = []
 
     return {
-        'parallel_read_safe': False,
-        'parallel_write_safe': False
+        'parallel_read_safe': True,
+        'parallel_write_safe': True,
     }
 
 
@@ -85,6 +85,7 @@ def get_locales(app, exception):
 
 
 def record_builder_type(app):
+    app.sitemap_links = {}
     # builder isn't initialized in the setup so we do it here
     # we rely on the class name, not the actual class, as it was moved 2.0.0
     builder_class_name = getattr(app, "builder", None).__class__.__name__
@@ -102,7 +103,6 @@ def hreflang_formatter(lang):
         return lang.replace("_", "-")
     return lang
 
-
 def add_html_link(app, pagename, templatename, context, doctree):
     """As each page is built, collect page names for the sitemap"""
     if app.is_dictionary_builder:
@@ -114,20 +114,23 @@ def add_html_link(app, pagename, templatename, context, doctree):
             directory_pagename = pagename[:-6] + "/"
         else:
             directory_pagename = pagename + "/"
-        app.sitemap_links.append(directory_pagename)
+        app.results[pagename] = directory_pagename
     else:
-        app.sitemap_links.append(pagename + ".html")
-
+        app.results[pagename] = (pagename + ".html")
 
 def create_sitemap(app, exception):
     """Generates the sitemap.xml from the collected HTML page links"""
+
+    for k, v in app.results.items():
+        app.sitemap_links[k] = v
+    sitemap_links = app.sitemap_links.values()
     site_url = app.builder.config.site_url or app.builder.config.html_baseurl
     site_url = site_url.rstrip('/') + '/'
     if not site_url:
         print("sphinx-sitemap error: neither html_baseurl nor site_url "
               "are set in conf.py. Sitemap not built.")
         return
-    if (not app.sitemap_links):
+    if (not sitemap_links):
         print("sphinx-sitemap warning: No pages generated for %s" %
               app.config.sitemap_filename)
         return
@@ -144,7 +147,7 @@ def create_sitemap(app, exception):
     else:
         version = ""
 
-    for link in app.sitemap_links:
+    for link in sitemap_links:
         url = ET.SubElement(root, "url")
         scheme = app.config.sitemap_url_scheme
         if app.builder.config.language:
